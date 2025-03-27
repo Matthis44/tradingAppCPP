@@ -1,23 +1,27 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-	  {
-		"label": "Build Active File with g++-13",
-		"type": "shell",
-		"command": "/usr/bin/g++-13",
-		"args": [
-		  "-std=c++20",
-		  "-g",
-		  "${file}",
-		  "-o",
-		  "${fileDirname}/${fileBasenameNoExtension}"
-		],
-		"group": {
-		  "kind": "build",
-		  "isDefault": true
-		},
-		"problemMatcher": ["$gcc"]
-	  }
-	]
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build",
+        "type": "shell",
+        "command": "g++",
+        "args": [
+          "-g",
+          "-O0",
+          "-std=c++17",
+          "-Iinclude",
+          "main.cpp",
+          "src/*.cpp",
+          "-o",
+          "build/main",
+          "-lmysqlcppconn"
+        ],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": []
+      }
+    ]
   }
   
