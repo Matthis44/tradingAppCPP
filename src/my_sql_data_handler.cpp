@@ -9,11 +9,13 @@ using namespace std;
 
 mysql_data_handler::mysql_data_handler(std::shared_ptr<event_queue> events,
                                        const vector<string>& symbol_list,
+                                       const std::string& interval,
+                                       const std::string& start_date,
                                        const string& user,
                                        const string& password,
                                        const string& host,
                                        const string& db)
-    : events_(events), symbol_list_(symbol_list),
+    : events_(events), symbol_list_(symbol_list),interval_(interval),start_date_(start_date),
       user_(user), password_(password), host_(host), db_(db) {
     
     try {
@@ -44,23 +46,29 @@ vector<mysql_bar_row> mysql_data_handler::fetch_symbol_bars(const string& symbol
 
     try {
         string query = R"(
-            SELECT dp.price_date AS datetime,
-                   dp.open_price AS open,
-                   dp.high_price AS high,
-                   dp.low_price AS low,
-                   dp.close_price AS close,
-                   dp.adj_close_price AS adj_close,
-                   dp.volume AS volume
-            FROM daily_price dp
-            JOIN symbol s ON dp.symbol_id = s.id
+            SELECT pb.timestamp AS datetime,
+                   pb.open_price AS open,
+                   pb.high_price AS high,
+                   pb.low_price AS low,
+                   pb.close_price AS close,
+                   pb.volume AS volume,
+                   pb.trade_count AS trade_count,
+                   pb.vwap AS vwap
+            FROM price_bar pb
+            JOIN symbol s ON pb.symbol_id = s.id
             WHERE s.ticker = ?
-            ORDER BY dp.price_date ASC
+            AND pb.`interval` = ?
+            AND pb.timestamp >= ?
+            ORDER BY pb.timestamp ASC
         )";
 
-        unique_ptr<sql::PreparedStatement> stmt(
-            conn_->prepareStatement(query));
+        unique_ptr<sql::PreparedStatement> stmt(conn_->prepareStatement(query));
         stmt->setString(1, symbol);
+        stmt->setString(2, interval_); 
+        stmt->setString(3, start_date_);
         unique_ptr<sql::ResultSet> res(stmt->executeQuery());
+
+        // Ici tu peux parser les résultats et remplir ton vector<mysql_bar_row>
 
         while (res->next()) {
             mysql_bar_row bar;
@@ -70,19 +78,20 @@ vector<mysql_bar_row> mysql_data_handler::fetch_symbol_bars(const string& symbol
             bar.high       = res->getDouble("high");
             bar.low        = res->getDouble("low");
             bar.close      = res->getDouble("close");
-            bar.adj_close  = res->getDouble("adj_close");
+            bar.adj_close  = res->getDouble("close");
             bar.volume     = res->getDouble("volume");
             bars.push_back(bar);
         }
 
-    } catch (sql::SQLException& e) {
-        cerr << "SQL error while loading " << symbol << ": " << e.what() << endl;
+    
+    } catch (sql::SQLException &e) {
+        cerr << "SQL error: " << e.what() << endl;
+    } catch (std::exception &e) {
+        cerr << "Erreur générique: " << e.what() << endl;
     }
     if (!bars.empty()) {
         const auto& bar = bars.front();
         std::time_t tt=std::chrono::system_clock::to_time_t(bar.datetime);
-        cout << "[DEBUG] Premier bar de " << symbol << " : "
-             << std::put_time(std::localtime(&tt),"%Y-%m-%d %H:%M:%S") << " | Open=" << bar.open << " | High=" << bar.high << endl;
     }
     
     return bars;
@@ -100,8 +109,6 @@ void mysql_data_handler::update_bars() {
             cout << "End of data for symbol: " << symbol << endl;
         }
     }
-    std::cout << "[DEBUG] update_bars() → address de events_: " << events_.get() << std::endl;
-
     events_->push(make_shared<market_event>());
 
 }

@@ -20,6 +20,8 @@ public:
     void update_fill(const std::shared_ptr<event>& ev);
     void update_signal(const std::shared_ptr<event>& ev);
     double get_total_pnl() const;
+    double get_total_pnl_pct() const;
+    double get_max_drawdown() const;
 
 private:
     std::shared_ptr<my_data_handler> data_;

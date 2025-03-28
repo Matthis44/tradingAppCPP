@@ -24,6 +24,8 @@ class mysql_data_handler : public my_data_handler {
 public:
     mysql_data_handler(std::shared_ptr<event_queue> events,
                        const std::vector<std::string>& symbol_list,
+                       const std::string& interval,
+                       const std::string& start_date="",
                        const std::string& user = "sec_user",
                        const std::string& password = "1Lo2Ma3Is@",
                        const std::string& host = "tcp://127.0.0.1:3306",
@@ -49,6 +51,8 @@ private:
     std::unordered_map<std::string, size_t> symbol_index_;
 
     std::shared_ptr<sql::Connection> conn_;
+    const std::string start_date_;
+    const std::string interval_;
     std::string user_;
     std::string password_;
     std::string host_;

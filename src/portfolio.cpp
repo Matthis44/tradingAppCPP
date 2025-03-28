@@ -53,6 +53,7 @@ void portfolio::update_timeindex(const std::shared_ptr<event>& ev) {
     pos.datetime=dt;
     pos.positions = current_positions_.positions;
     all_positions_.push_back(pos);
+    current_positions_ = pos;
 
     // Mise à jour des avoirs
     current_holdings hold;
@@ -68,6 +69,7 @@ void portfolio::update_timeindex(const std::shared_ptr<event>& ev) {
     }
 
     all_holdings_.push_back(hold);
+    current_holdings_ = hold;
 }
 
 void portfolio::update_positions_from_fill(const std::shared_ptr<fill_event>& fill) {
@@ -77,16 +79,18 @@ void portfolio::update_positions_from_fill(const std::shared_ptr<fill_event>& fi
 
 void portfolio::update_holdings_from_fill(const std::shared_ptr<fill_event>& fill) {
     int direction = fill->get_direction() == "BUY" ? 1 : -1;
-    double price = data_->get_latest_bar_value(fill->get_symbol(), "adj_close");
+    double price = data_->get_latest_bar_value(fill->get_symbol(), "close"); // ✅ "close" pas "adj_close"
     double cost = direction * price * fill->get_quantity();
+    double commission = fill->get_commission();
 
-    current_holdings_.holdings[fill->get_symbol()] += cost;
-    current_holdings_.commission += fill->get_commission();
-    current_holdings_.cash -= (cost + fill->get_commission());
-    current_holdings_.total -= (cost + fill->get_commission());
+    current_holdings_.cash -= (cost + commission);
+    current_holdings_.commission += commission;
+    current_holdings_.total -= (cost + commission); // peut être recalculé ensuite
 }
 
+
 void portfolio::update_fill(const std::shared_ptr<event>& ev) {
+    std::cout << "Event reçu dans update_fill: " << ev->get_type() << std::endl;
     if (ev->get_type() == "FILL") {
         auto fill = std::dynamic_pointer_cast<fill_event>(ev);
         update_positions_from_fill(fill);
@@ -99,13 +103,23 @@ std::shared_ptr<order_event> portfolio::generate_naive_order(const std::shared_p
     std::string direction = signal->get_signal_type();
     int current_qty = current_positions_.positions[symbol];
     std::string order_type = "MKT";
-    int quantity = 100;
+    int quantity = 10;
 
+    double price = data_->get_latest_bar_value(symbol, "close");
+    double estimated_cost = price * quantity;
+
+    // Vérifie le cash suffisant
     if (direction == "LONG" && current_qty == 0) {
-        return std::make_shared<order_event>(symbol, order_type, quantity, "BUY");
-    } else if (direction == "SHORT" && current_qty == 0) {
+        if (current_holdings_.cash >= estimated_cost) {
+            return std::make_shared<order_event>(symbol, order_type, quantity, "BUY");
+        } else {
+            std::cout << "Pas assez de cash pour acheter " << symbol << std::endl;
+        }
+    }
+    else if (direction == "SHORT" && current_qty == 0) {
         return std::make_shared<order_event>(symbol, order_type, quantity, "SELL");
-    } else if (direction == "EXIT") {
+    }
+    else if (direction == "EXIT") {
         if (current_qty > 0)
             return std::make_shared<order_event>(symbol, order_type, std::abs(current_qty), "SELL");
         else if (current_qty < 0)
@@ -114,6 +128,7 @@ std::shared_ptr<order_event> portfolio::generate_naive_order(const std::shared_p
 
     return nullptr;
 }
+
 
 void portfolio::update_signal(const std::shared_ptr<event>& ev) {
     if (ev->get_type() == "SIGNAL") {
@@ -130,4 +145,29 @@ double portfolio::get_total_pnl() const {
 
     double final_total = all_holdings_.back().total;
     return final_total - initial_capital_;
+}
+
+double portfolio::get_total_pnl_pct() const {
+    if (initial_capital_ == 0.0) return 0.0;
+    double final_total = all_holdings_.back().total;
+    return (final_total - initial_capital_) / initial_capital_ * 100.0;
+}
+
+double portfolio::get_max_drawdown() const {
+    if (all_holdings_.empty()) return 0.0;
+
+    double peak = all_holdings_.front().total;
+    double max_dd = 0.0;
+
+    for (const auto& h : all_holdings_) {
+        if (h.total > peak) {
+            peak = h.total;
+        }
+        double drawdown = (peak - h.total) / peak;
+        if (drawdown > max_dd) {
+            max_dd = drawdown;
+        }
+    }
+
+    return max_dd * 100.0; // en pourcentage
 }

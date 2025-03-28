@@ -11,16 +11,18 @@
 
 
 /// Convertit une date sous forme de chaîne "YYYY-MM-DD" en std::chrono::system_clock::time_point
-inline std::chrono::system_clock::time_point parse_date(const std::string& date_str) {
+/// Convertit une date complète "YYYY-MM-DD HH:MM:SS" en time_point
+inline std::chrono::system_clock::time_point parse_date(const std::string& datetime_str) {
     std::tm tm = {};
-    std::istringstream ss(date_str);
-    ss >> std::get_time(&tm, "%Y-%m-%d");
+    std::istringstream ss(datetime_str);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     if (ss.fail()) {
-        throw std::runtime_error("Date invalide : " + date_str);
+        throw std::runtime_error("DateTime invalide : " + datetime_str);
     }
     std::time_t tt = std::mktime(&tm);
     return std::chrono::system_clock::from_time_t(tt);
 }
+
 
 /// Affiche un std::chrono::system_clock::time_point en format YYYY-MM-DD HH:MM:SS
 inline std::string format_datetime(const std::chrono::system_clock::time_point& tp) {

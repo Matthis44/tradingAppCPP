@@ -51,8 +51,6 @@ void Backtest::run_backtest() {
             events_->pop();
 
             if (!event) continue;
-
-            std::cout << "[EVENT HANDLED] " << event->repr() << std::endl;
             process_event(event);
         }
 
@@ -113,7 +111,13 @@ void Backtest::output_performance() {
     std::cout << "Total orders:  " << orders_ << std::endl;
     std::cout << "Total fills:   " << fills_ << std::endl;
     double pnl = portfolio_->get_total_pnl();
-    std::cout << "💰 PnL final : " << pnl << " $" << std::endl;
+    double pnl_pct= portfolio_->get_total_pnl_pct();
+    std::cout << "💰 PnL final : " << pnl << " $" << " || " << pnl_pct << " %" << std::endl;
+    double drawdown = portfolio_->get_max_drawdown();
+    std::cout << "Max drawdown : " << drawdown <<" %"<<std::endl;
+
+
+    
 }
 
 void Backtest::simulate_trading() {

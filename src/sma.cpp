@@ -24,7 +24,6 @@ double simple_moving_average_strategy::calculate_sma(const std::vector<double>& 
 }
 
 void simple_moving_average_strategy::calculate_signals(const std::shared_ptr<event>& market_event) {
-    std::cout << "[STRATEGY] calculate_signals appelée avec : " << market_event->get_type() << std::endl;
 
     if (market_event->get_type() != "MARKET") return;
 
@@ -38,7 +37,7 @@ void simple_moving_average_strategy::calculate_signals(const std::shared_ptr<eve
         double long_sma = calculate_sma(long_prices);
         auto datetime = data_->get_latest_bar_datetime(symbol);
 
-        std::cout << "[SMA DEBUG] " << symbol
+        std::cout << "[SMA STATE] " << symbol
                   << " | short_sma: " << short_sma
                   << " | long_sma: " << long_sma
                   << " | datetime: " << format_datetime(datetime)
