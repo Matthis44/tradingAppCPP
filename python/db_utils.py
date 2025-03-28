@@ -1,43 +1,69 @@
 import os
-import mysql.connector
 from datetime import datetime, timezone
-import alpaca
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient,OptionHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest,OptionBarsRequest
-from alpaca.trading.client import TradingClient, GetAssetsRequest
-from alpaca.trading.requests import GetOptionContractsRequest, LimitOrderRequest, MarketOrderRequest
-from alpaca.trading.enums import AssetStatus, ContractType, OrderSide,OrderType,TimeInForce,QueryOrderStatus
-import pytz
-
 from pathlib import Path
+import mysql.connector
 from dotenv import load_dotenv
-import os
+import pytz
+import pandas as pd
 
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+
+# Charger .env
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
-            
 
-# Récupère les clés Alpaca
-API_KEY = os.getenv("API_KEY")
-API_SECRET = os.getenv("SECRET_KEY")
-
-# Connexion MySQL
+# Configuration MySQL
 DB_CONFIG = {
     "host": os.getenv("MYSQL_HOST"),
     "user": os.getenv("MYSQL_USER"),
     "password": os.getenv("MYSQL_PASSWORD"),
     "database": os.getenv("MYSQL_DATABASE")
 }
+# Récupère les clés Alpaca
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("SECRET_KEY")
 
 
+# Alpaca vendor info
 ALPACA_DATA_VENDOR_NAME = "Alpaca"
 ALPACA_WEBSITE = "https://alpaca.markets"
 
-
-# CONNECT TO MYSQL
+# Connexion
 conn = mysql.connector.connect(**DB_CONFIG)
 cursor = conn.cursor(dictionary=True)
+
+# ---------------------------- #
+# 📌 Fonctions utilitaires BDD #
+# ---------------------------- #
+
+
+
+def determine_asset_type(symbol):
+    """
+    Détermine le type d'instrument (action, crypto ou ETF) d'un symbole basé sur la convention de nommage :
+    - Si le symbole contient un '/', il est considéré comme une crypto (ex: BTC/USD).
+    - Si le symbole est dans une liste d'ETF connus, il est considéré comme un ETF.
+    - Sinon, il est considéré comme une action (stock).
+    
+    :param symbol: Le symbole à analyser (ex: 'AAPL', 'BTC/USD', 'SPY')
+    :return: Le type d'instrument ('stock', 'crypto', 'etf')
+    """
+    # Liste d'exemples d'ETF (tu peux ajouter plus d'ETF si nécessaire)
+    etf_list = ['SPY', 'QQQ', 'DIA', 'VTI', 'IWM', 'EEM', 'XLF', 'XLY',
+                 'XLI','IVY','VOO','SCHX','SPLG','SPYG','GLD','SLV','USO','DBC']
+    
+    # Si le symbole contient '/', il est probablement une crypto
+    if '/' in symbol:
+        return 'crypto'
+    # Si le symbole est dans la liste d'ETF, on le considère comme un ETF
+    elif symbol in etf_list:
+        return 'etf'
+    else:
+        # Sinon, on considère que c'est une action (stock)
+        return 'stock'
 
 def get_or_create_data_vendor():
     cursor.execute("SELECT id FROM data_vendor WHERE name = %s", (ALPACA_DATA_VENDOR_NAME,))
@@ -52,7 +78,7 @@ def get_or_create_data_vendor():
     conn.commit()
     return cursor.lastrowid
 
-def get_or_create_symbol(symbol):
+def get_or_create_symbol(symbol, instrument='equity'):
     cursor.execute("SELECT id FROM symbol WHERE ticker = %s", (symbol,))
     result = cursor.fetchone()
     if result:
@@ -61,9 +87,10 @@ def get_or_create_symbol(symbol):
     cursor.execute("""
         INSERT INTO symbol (ticker, instrument, created_date, last_updated_date)
         VALUES (%s, %s, %s, %s)
-    """, (symbol, 'equity', now, now))
+    """, (symbol, instrument, now, now))
     conn.commit()
     return cursor.lastrowid
+
 
 def insert_price_bar(data_vendor_id, symbol_id, interval, bars):
     now = datetime.now(timezone.utc)
@@ -108,7 +135,7 @@ def insert_price_bar(data_vendor_id, symbol_id, interval, bars):
 def fetch_and_store(symbol, start_date, end_date, interval_str, asset_type='stock'):
     print(f"📥 Fetching {interval_str} {asset_type.upper()} data for {symbol}...")
 
-    symbol_id = get_or_create_symbol(symbol)
+    symbol_id = get_or_create_symbol(symbol,instrument=asset_type)
     data_vendor_id = get_or_create_data_vendor()
 
     tf_map = {
@@ -144,16 +171,18 @@ def fetch_and_store(symbol, start_date, end_date, interval_str, asset_type='stoc
         )
         bars = client.get_crypto_bars(request).data.get(symbol, [])
     
-        '''
-    elif asset_type=='option':
-        client = CryptoHistoricalDataClient(API_KEY, API_SECRET)
-        request = OptionBarsRequest(
+    elif asset_type == 'etf':
+        # L'API d'Alpaca ne supporte pas directement les données historiques d'ETF,
+        # mais tu peux les traiter comme des actions.
+        print(f"⚠️ Traitement de {symbol} en tant qu'ETF.")
+        client = StockHistoricalDataClient(API_KEY, API_SECRET)  # Utiliser StockDataClient pour les ETF
+        request = StockBarsRequest(
             symbol_or_symbols=[symbol],
             timeframe=timeframe,
             start=start_date,
             end=end_date
         )
-        '''
+        bars = client.get_stock_bars(request).data.get(symbol, [])
     else:
         raise ValueError(f"Type d'actif non supporté : {asset_type}")
 
@@ -162,26 +191,3 @@ def fetch_and_store(symbol, start_date, end_date, interval_str, asset_type='stoc
     else:
         insert_price_bar(data_vendor_id, symbol_id, interval_str, bars)
         print(f"✅ {len(bars)} bars insérés pour {symbol} ({asset_type})")
-
-
-if __name__ == "__main__":
-    try:
-        interval = '5Min'
-        start_date = datetime(2023, 1, 1)
-        end_date = datetime(2025, 1, 1)
-
-        # Stocks
-        for sym in ['AAPL']:
-            
-            fetch_and_store(sym, start_date, end_date, interval, asset_type='stock')
-
-        # Crypto
-        #for sym in ['BTC/USD', 'ETH/USD']:
-           #fetch_and_store(sym, start_date, end_date, interval, asset_type='crypto')
-
-    except Exception as e:
-        print("❌ Une erreur est survenue :", e)
-
-    finally:
-        conn.close()
-        print("🔌 Connexion MySQL fermée.")
