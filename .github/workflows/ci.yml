@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mysql: [OFF, ON]
+    name: build (MySQL ${{ matrix.mysql }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MySQL Connector/C++
+        if: matrix.mysql == 'ON'
+        run: sudo apt-get update && sudo apt-get install -y libmysqlcppconn-dev
+      - run: cmake -S . -B build -DWITH_MYSQL=${{ matrix.mysql }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure

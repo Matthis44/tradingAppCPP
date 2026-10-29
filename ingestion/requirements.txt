@@ -1,0 +1,6 @@
+alpaca-py>=0.20
+mysql-connector-python>=8.0
+pandas>=2.0
+plotly>=5.0
+python-dotenv>=1.0
+streamlit>=1.30
