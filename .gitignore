@@ -1,2 +1,19 @@
+# Build
+build*/
+compile_commands.json
+
+# Secrets
 .env
-.vscode
+
+# Outputs
+equity_curve.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
