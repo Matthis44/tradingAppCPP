@@ -1,126 +1,82 @@
+#include "backtester/backtest.h"
 
-
-#include "strategy.h"
-#include "bar_row_use.h"
-#include "event_queue.h"
-#include "event.h"
-#include <unordered_map>
-#include <vector>
-#include <string>
-#include <numeric>
-
-#include "backtest.h"
+#include <fstream>
 #include <iostream>
-#include <thread>
-#include <chrono>
+#include <stdexcept>
 
-Backtest::Backtest(const std::vector<std::string>& symbol_list,
-                   double initial_capital,
-                   int heartbeat,
-                   std::chrono::system_clock::time_point&  start_date,
-                   std::shared_ptr<my_data_handler> data_handler,
-                   std::shared_ptr<execution_handler> execution_handler,
-                   std::shared_ptr<portfolio> portfolio,
-                   std::shared_ptr<strategy> strategy,
-                   std::shared_ptr<event_queue> events)
-    : symbol_list_(symbol_list),
-      initial_capital_(initial_capital),
-      heartbeat_(heartbeat),
-      start_date_(start_date),
-      data_handler_(data_handler),
-      execution_handler_(execution_handler),
-      portfolio_(portfolio),
-      strategy_(strategy),
-      events_(events),
-      signals_(0),
-      orders_(0),
-      fills_(0) {}
+#include "backtester/performance.h"
+#include "backtester/time_utils.h"
 
+namespace bt {
 
-void Backtest::run_backtest() {
-    std::cout << "==================== Starting backtest ====================" << std::endl;
+void SimulatedExecutionHandler::execute(const OrderEvent& order) {
+    const Bar& bar = data_->latest_bar(order.symbol);
+    events_->push(std::make_shared<FillEvent>(bar.datetime, order.symbol, order.quantity, order.direction,
+                                              bar.adj_close, ib_commission(order.quantity)));
+}
 
-    int iteration = 0;
+Backtest::Backtest(std::shared_ptr<DataHandler> data, std::shared_ptr<EventQueue> events,
+                   std::shared_ptr<Strategy> strategy, std::shared_ptr<Portfolio> portfolio, bool verbose)
+    : data_(std::move(data)),
+      events_(std::move(events)),
+      strategy_(std::move(strategy)),
+      portfolio_(std::move(portfolio)),
+      execution_(data_, events_),
+      verbose_(verbose) {}
 
-    while (data_handler_->continue_backtest()) {
-        data_handler_->update_bars();
-
-        while (!events_->is_empty()) {
-            iteration++;
-            auto event = events_->front();
-            events_->pop();
-
-            if (!event) continue;
-            process_event(event);
+void Backtest::dispatch(const Event& event) {
+    switch (event.type()) {
+        case EventType::Market:
+            strategy_->calculate_signals(static_cast<const MarketEvent&>(event));
+            portfolio_->update_timeindex();
+            break;
+        case EventType::Signal: {
+            const auto& s = static_cast<const SignalEvent&>(event);
+            ++signals_;
+            if (verbose_)
+                std::cout << format_datetime(s.datetime) << "  " << to_string(s.signal) << ' ' << s.symbol << '\n';
+            portfolio_->on_signal(s);
+            break;
         }
+        case EventType::Order:
+            ++orders_;
+            execution_.execute(static_cast<const OrderEvent&>(event));
+            break;
+        case EventType::Fill:
+            ++fills_;
+            portfolio_->on_fill(static_cast<const FillEvent&>(event));
+            break;
+    }
+}
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(heartbeat_));
+BacktestStats Backtest::run(double periods_per_year) {
+    while (data_->continue_backtest()) {
+        data_->update_bars();
+        while (auto event = events_->pop()) dispatch(*event);
     }
 
-    std::cout << "✅ Fin du backtest atteinte." << std::endl;
-    std::cout << "\n==================== Backtest terminé ====================" << std::endl;
-    std::cout << "Total SIGNALS : " << signals_ << std::endl;
-    std::cout << "Total ORDERS  : " << orders_ << std::endl;
-    std::cout << "Total FILLS   : " << fills_ << std::endl;
+    std::vector<double> totals;
+    for (const auto& p : portfolio_->equity_curve()) totals.push_back(p.total);
+    if (totals.empty()) throw std::runtime_error("The backtest produced no bars");
+
+    const auto dd = drawdowns(totals);
+    return {totals.back() / portfolio_->initial_capital() - 1.0,
+            sharpe_ratio(returns_from_values(totals), periods_per_year),
+            dd.max_drawdown,
+            dd.max_duration,
+            signals_,
+            orders_,
+            fills_};
 }
 
-    
-    
-void Backtest::process_event(const std::shared_ptr<event>& event) {
-        const std::string type = event->get_type();
-        
-        if (!strategy_) {
-            std::cerr << "[ERROR] La stratégie n'est pas initialisée !" << std::endl;
-        }
-        if (type == "MARKET") {
-            std::cout << "→ Traitement [MARKET]" << std::endl;
-            strategy_->calculate_signals(event);
-            portfolio_->update_timeindex(event);
-        } 
-        else if (type == "SIGNAL") {
-            std::cout << "→ Traitement [SIGNAL]" << std::endl;
-            signals_++;
-            portfolio_->update_signal(event);
-        } 
-        else if (type == "ORDER") {
-            std::cout << "→ Traitement [ORDER]" << std::endl;
-            orders_++;
-            execution_handler_->execute_order(event);
-        } 
-        else if (type == "FILL") {
-            std::cout << "→ Traitement [FILL]" << std::endl;
-            fills_++;
-            portfolio_->update_fill(event);
-        } 
-        else {
-            std::cout << "[WARNING] Type d’événement inconnu : " << type << std::endl;
-        }
+void write_equity_curve(const Portfolio& portfolio, const std::string& path) {
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("Cannot write " + path);
+    out << "datetime,cash,market_value,commission,total\n";
+    for (const auto& p : portfolio.equity_curve()) {
+        out << format_datetime(p.datetime) << ',' << p.cash << ',' << p.market_value << ',' << p.commission << ','
+            << p.total << '\n';
     }
-    
-
-void Backtest::output_performance() {
-    //portfolio_->create_equity_curve();
-    //std::cout << "Final portfolio statistics:" << std::endl;
-
-    //auto stats = portfolio_->output_summary_stats();
-    //for (const auto& [key, value] : stats) {
-    //    std::cout << key << ": " << value << std::endl;
-    //}
-
-    std::cout << "\nTotal signals: " << signals_ << std::endl;
-    std::cout << "Total orders:  " << orders_ << std::endl;
-    std::cout << "Total fills:   " << fills_ << std::endl;
-    double pnl = portfolio_->get_total_pnl();
-    double pnl_pct= portfolio_->get_total_pnl_pct();
-    std::cout << "💰 PnL final : " << pnl << " $" << " || " << pnl_pct << " %" << std::endl;
-    double drawdown = portfolio_->get_max_drawdown();
-    std::cout << "Max drawdown : " << drawdown <<" %"<<std::endl;
-
-
-    
 }
 
-void Backtest::simulate_trading() {
-    run_backtest();
-    output_performance();
-}
+}  // namespace bt
