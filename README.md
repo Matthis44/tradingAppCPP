@@ -5,7 +5,7 @@
 ![CMake](https://img.shields.io/badge/build-CMake-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A C++17 port of my [Python event-driven backtester](https://github.com/Matthis44/Backtesting_PY),
+A C++17 port of my [Python event-driven backtester](https://github.com/Matthis44/backtesting-py),
 with a Python ingestion layer that loads **intraday bars from the Alpaca API** into a MySQL
 securities master, and a Streamlit dashboard to explore them.
 
